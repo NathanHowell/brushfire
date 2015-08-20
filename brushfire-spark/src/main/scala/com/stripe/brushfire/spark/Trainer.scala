@@ -2,23 +2,20 @@ package com.stripe.brushfire
 package spark
 
 import com.twitter.algebird._
-import com.twitter.algebird.Operators._
+import com.twitter.algebird.spark._
 import com.twitter.bijection.Injection
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.SparkContext
-import org.apache.spark.SparkContext._
 
 import java.util.Random
 
-import scala.reflect.{ classTag, ClassTag }
+import scala.reflect.ClassTag
 
-case class Trainer[K: Ordering, V, T: Monoid: ClassTag](
+case class Trainer[K: Ordering, V, T: Semigroup: Monoid: ClassTag](
     trainingData: RDD[Instance[K, V, T]],
     sampler: Sampler[K],
     trees: RDD[(Int, Tree[K, V, T])]) {
-  import Trainer.ExtraRDDOps
-
   private def context: SparkContext = trainingData.context
 
   def saveAsTextFile(path: String)(implicit inj: Injection[Tree[K, V, T], String]): Trainer[K, V, T] = {
@@ -55,12 +52,14 @@ case class Trainer[K: Ordering, V, T: Monoid: ClassTag](
 
     val newTrees = trainingData
       .flatMap(collectLeaves)
-      .sumByKey
+      .algebird
+      .sumByKey[LeafId, T]
       .map {
         case ((treeIndex, leafIndex), target) =>
           treeIndex -> Map(leafIndex -> target)
       }
-      .sumByKey
+      .algebird
+      .sumByKey[Int, Map[Int, T]]
       .map {
         case (treeIndex, leafTargets) =>
           val newTree =
@@ -95,7 +94,7 @@ case class Trainer[K: Ordering, V, T: Monoid: ClassTag](
 
     val emptyExpansions = context
       .parallelize(0 until sampler.numTrees)
-      .map { _ -> List[(Int, Node[K, V, T])]() }
+      .map { _ -> List[(Int, Node[K, V, T, Unit])]() }
 
     val newTrees = trainingData
       .flatMap(sampleInstances)
@@ -103,17 +102,18 @@ case class Trainer[K: Ordering, V, T: Monoid: ClassTag](
       .map {
         case ((treeIndex, leafIndex), instances) =>
           val target = Monoid.sum(instances.map { _.target })
-          val leaf = LeafNode[K, V, T](0, target)
+          val leaf = LeafNode[K, V, T, Unit](0, target)
           val expanded = Tree.expand(times, leaf, splitter, evaluator, stopper, instances)
           treeIndex -> List(leafIndex -> expanded)
       }
       .union(emptyExpansions)
-      .sumByKey
+      .algebird
+      .sumByKey[Int, List[(Int, Node[K, V, T, Unit])]]
       .map {
         case (treeIndex, leafExpansions) =>
           val expansions = leafExpansions.toMap
           val newTree = treeMap(treeIndex)
-            .updateByLeafIndex(expansions.get(_))
+            .updateByLeafIndex(expansions.get)
           treeIndex -> newTree
       }
       .cache()
@@ -183,7 +183,7 @@ case class Trainer[K: Ordering, V, T: Monoid: ClassTag](
               (feature, split, _) <- leafSplits.get(index).toList
               (predicate, target) <- split.predicates
             } yield {
-              (feature, predicate, target)
+              (feature, predicate, target, ())
             }
           }
       treeIndex -> newTree
@@ -198,7 +198,8 @@ case class Trainer[K: Ordering, V, T: Monoid: ClassTag](
       .reduceByKey(splitter.semigroup.plus(_, _))
       .flatMap(split.tupled)
       .union(emptySplits)
-      .sumByKey
+      .algebird
+      .sumByKey[Int, Map[Int, ScoredSplit]]
       .map(growTree.tupled)
       .cache()
 
@@ -211,16 +212,11 @@ object Trainer {
 
   def apply[K: Ordering, V, T: Monoid: ClassTag](trainingData: RDD[Instance[K, V, T]], sampler: Sampler[K]): Trainer[K, V, T] = {
     val sc = trainingData.context
-    val initialTrees = Vector.tabulate(sampler.numTrees) { _ -> Tree.empty[K, V, T](Monoid.zero) }
+    val initialTrees = Vector.tabulate(sampler.numTrees) { _ -> Tree.singleton[K, V, T](Monoid.zero) }
     val parallelism = scala.math.min(MaxParallelism, sampler.numTrees)
     Trainer(
       trainingData,
       sampler,
       sc.parallelize(initialTrees, parallelism))
-  }
-
-  implicit class ExtraRDDOps[A](val rdd: RDD[A]) extends AnyVal {
-    def sumByKey[K, V](implicit ev: A <:< (K, V), ctK: ClassTag[K], ctV: ClassTag[V], V: Monoid[V]): RDD[(K, V)] =
-      rdd.asInstanceOf[RDD[(K, V)]].foldByKey(V.zero)(V.plus)
   }
 }

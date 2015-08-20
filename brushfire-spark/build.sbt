@@ -4,7 +4,8 @@ resolvers += Resolvers.conjars
 
 libraryDependencies ++= Seq(
   Deps.hadoopClient,
-  Deps.sparkCore
+  Deps.sparkCore,
+  Deps.algebirdSpark
 )
 
 // mainClass := Some("com.twitter.scalding.Tool")
