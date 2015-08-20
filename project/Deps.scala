@@ -6,13 +6,14 @@ object Resolvers {
 
 object Deps {
   object V {
-    val algebird = "0.9.0"
+    val algebird = "0.11.0"
     val jackson = "1.9.13"
     val bijection = "0.7.0"
     val tDigest = "3.1"
 
-    val hadoopClient = "2.5.2"
+    val hadoopClient = "2.2.0"
     val scalding = "0.13.1"
+    val spark = "1.4.1"
     val chill = "0.5.2"
 
     val finatra = "1.6.0"
@@ -31,6 +32,9 @@ object Deps {
 
   val hadoopClient   = "org.apache.hadoop"    % "hadoop-client"      % V.hadoopClient   % "provided"
   val scaldingCore   = "com.twitter"         %% "scalding-core"      % V.scalding
+
+  val sparkCore      = "org.apache.spark"    %% "spark-core"         % V.spark
+  val algebirdSpark  = "com.twitter"         %% "algebird-spark"     % V.algebird
 
   val finatra        = "com.twitter"         %% "finatra"            % V.finatra
 

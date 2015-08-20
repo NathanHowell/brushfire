@@ -1,8 +1,8 @@
 organization in ThisBuild := "com.stripe"
 
-scalaVersion in ThisBuild := "2.11.5"
+scalaVersion in ThisBuild := "2.10.5"
 
-crossScalaVersions in ThisBuild := Seq("2.10.4", "2.11.5")
+// crossScalaVersions in ThisBuild := Seq("2.10.4", "2.11.5")
 
 scalacOptions in ThisBuild ++= Seq(
   "-deprecation",
@@ -33,4 +33,8 @@ lazy val brushfireScalding = project.
 
 lazy val brushfireFinatra = project.
   in(file("brushfire-finatra")).
+  dependsOn(brushfireCore)
+
+lazy val brushfireSpark = project.
+  in(file("brushfire-spark")).
   dependsOn(brushfireCore)
