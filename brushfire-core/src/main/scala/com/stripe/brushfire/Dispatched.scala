@@ -17,6 +17,7 @@ case class DispatchedSplitter[A: Ordering, B, C: Ordering, D, T](
     extends Splitter[Dispatched[A, B, C, D], T] {
 
   type S = Dispatched[ordinal.S, nominal.S, continuous.S, sparse.S]
+
   val semigroup =
     Semigroup.from[S] {
       case (Ordinal(l), Ordinal(r)) => Ordinal(ordinal.semigroup.plus(l, r))
