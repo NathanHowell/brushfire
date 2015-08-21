@@ -2,7 +2,7 @@ package com.stripe.brushfire
 
 import com.twitter.algebird._
 
-object SingleTreeSampler extends Sampler[Any, Any] {
+case object SingleTreeSampler extends Sampler[Any, Any] {
   val numTrees = 1
   def timesInTrainingSet(metadata: Any, treeIndex: Int) = 1
   def includeInValidationSet(metadata: Any, treeIndex: Int) = true
