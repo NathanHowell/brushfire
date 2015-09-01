@@ -13,7 +13,7 @@ trait Voter[T, P] { self =>
   /**
    * Transform the input targets by first applying the function `f`.
    */
-  def contramap[S](f: S => T): Voter[S, P] = new Voter[S, P] {
+  def contramap[S](f: S => T): Voter[S, P] = new Voter[S, P] with Serializable {
     def combine(targets: Iterable[S]): P =
       self.combine(targets.map(f))
   }
@@ -21,7 +21,7 @@ trait Voter[T, P] { self =>
   /**
    * Transform the final predictions of this `Voter` with function `f`.
    */
-  def map[Q](f: P => Q): Voter[T, Q] = new Voter[T, Q] {
+  def map[Q](f: P => Q): Voter[T, Q] = new Voter[T, Q] with Serializable {
     def combine(targets: Iterable[T]): Q =
       f(self.combine(targets))
   }
@@ -36,7 +36,7 @@ object Voter {
    * Returns a [[Voter]] that uses `f` as the `combine` function.
    */
   def apply[A, B](f: Iterable[A] => B): Voter[A, B] =
-    new Voter[A, B] {
+    new Voter[A, B] with Serializable {
       def combine(targets: Iterable[A]): B = f(targets)
     }
 
