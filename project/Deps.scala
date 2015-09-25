@@ -33,7 +33,7 @@ object Deps {
   val hadoopClient   = "org.apache.hadoop"    % "hadoop-client"      % V.hadoopClient   % "provided"
   val scaldingCore   = "com.twitter"         %% "scalding-core"      % V.scalding
 
-  val sparkCore      = "org.apache.spark"    %% "spark-core"         % V.spark
+  val sparkCore      = "org.apache.spark"    %% "spark-core"         % V.spark          % "provided"
   val algebirdSpark  = "com.twitter"         %% "algebird-spark"     % V.algebird
 
   val finatra        = "com.twitter"         %% "finatra"            % V.finatra
