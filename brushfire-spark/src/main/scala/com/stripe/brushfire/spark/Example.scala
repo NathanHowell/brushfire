@@ -32,22 +32,22 @@ class TrainCSV(
     loop(argv)
   }
 
-  private val mkInstance: List[String] => String => Instance[String, Double, Map[String, Long]] = { cols =>
+  private val mkInstance: List[String] => String => Instance[DefaultMetadata, Map[String, Double], Map[String, Long]] = { cols =>
     { line =>
       val parts = line.split(",").reverse.toList
       val label = parts.head
       val values = parts.tail.map { s => s.toDouble }
-      Instance(line, 0L, Map(cols.zip(values): _*), Map(label -> 1L))
+      Instance(DefaultMetadata(line, 0L), Map(cols.zip(values): _*), Map(label -> 1L))
     }
   }
 
-  private def trainingData(context: SparkContext): RDD[Instance[String, Double, Map[String, Long]]] =
+  private def trainingData(context: SparkContext): RDD[Instance[DefaultMetadata, Map[String, Double], Map[String, Long]]] =
     context
       .textFile(args("input"))
       .map(mkInstance(cols.toList))
 
-  def train(trainingData: RDD[Instance[String, Double, Map[String, Long]]]): Trainer[String, Double, Map[String, Long]] = {
-    Trainer(trainingData, KFoldSampler(4))
+  def train(trainingData: RDD[Instance[DefaultMetadata, Map[String, Double], Map[String, Long]]]): Trainer[DefaultMetadata, String, Double, Map[String, Long], Unit] = {
+    Trainer(trainingData, KFoldSampler[DefaultMetadata](numTrees = 4, id = _.id), defaultMetadataAnnotator[Unit])
       .expandTimes(3)
       .expandInMemory(10)
       .saveAsTextFile(args("output"))

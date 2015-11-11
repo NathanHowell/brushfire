@@ -12,13 +12,14 @@ import java.util.Random
 
 import scala.reflect.ClassTag
 
-case class Trainer[K: Ordering, V, T: Semigroup: Monoid: ClassTag](
-    trainingData: RDD[Instance[K, V, T]],
-    sampler: Sampler[K],
-    trees: RDD[(Int, Tree[K, V, T])]) {
+case class Trainer[M, K: Ordering, V, T: Monoid: ClassTag, A: Monoid: ClassTag](
+    trainingData: RDD[Instance[M, Map[K, V], T]],
+    sampler: Sampler[M, K],
+    annotator: Annotator[M, A],
+    trees: RDD[(Int, Tree[K, V, T, A])]) {
   private def context: SparkContext = trainingData.context
 
-  def saveAsTextFile(path: String)(implicit inj: Injection[Tree[K, V, T], String]): Trainer[K, V, T] = {
+  def saveAsTextFile(path: String)(implicit inj: Injection[Tree[K, V, T, A], String]): Trainer[M, K, V, T, A] = {
     trees
       .map {
         case (i, tree) =>
@@ -34,15 +35,15 @@ case class Trainer[K: Ordering, V, T: Semigroup: Monoid: ClassTag](
    * The leaves target distributions will be set to the summed distributions of the instances
    * in the training set that would get classified to them. Often used to initialize an empty tree.
    */
-  def updateTargets: Trainer[K, V, T] = {
+  def updateTargets: Trainer[M, K, V, T, A] = {
     type LeafId = (Int, Int)
 
-    val treeMap: scala.collection.Map[Int, Tree[K, V, T]] = trees.collectAsMap()
+    val treeMap: scala.collection.Map[Int, Tree[K, V, T, A]] = trees.collectAsMap()
 
-    val collectLeaves: Instance[K, V, T] => Iterable[(LeafId, T)] = { instance =>
+    val collectLeaves: Instance[M, Map[K, V], T] => Iterable[(LeafId, T)] = { instance =>
       for {
         (treeIndex, tree) <- treeMap.toList
-        repetition = sampler.timesInTrainingSet(instance.id, instance.timestamp, treeIndex)
+        repetition = sampler.timesInTrainingSet(instance.metadata, treeIndex)
         i <- 1 to repetition
         leafIndex <- tree.leafIndexFor(instance.features).toList
       } yield {
@@ -74,16 +75,16 @@ case class Trainer[K: Ordering, V, T: Semigroup: Monoid: ClassTag](
     copy(trees = newTrees)
   }
 
-  def expandInMemory(times: Int)(implicit evaluator: Evaluator[V, T], splitter: Splitter[V, T], stopper: Stopper[T]): Trainer[K, V, T] = {
+  def expandInMemory(times: Int)(implicit evaluator: Evaluator[V, T, A], splitter: Splitter[V, T], stopper: Stopper[T]): Trainer[M, K, V, T, A] = {
     type LeafId = (Int, Int)
 
-    val treeMap: scala.collection.Map[Int, Tree[K, V, T]] = trees.collectAsMap()
+    val treeMap: scala.collection.Map[Int, Tree[K, V, T, A]] = trees.collectAsMap()
     val rng: Random = new Random(1234L)
 
-    val sampleInstances: Instance[K, V, T] => Iterable[(LeafId, Instance[K, V, T])] = { instance =>
+    val sampleInstances: Instance[M, Map[K, V], T] => Iterable[(LeafId, Instance[M, Map[K, V], T])] = { instance =>
       for {
         (treeIndex, tree) <- treeMap.toList
-        repetition = sampler.timesInTrainingSet(instance.id, instance.timestamp, treeIndex)
+        repetition = sampler.timesInTrainingSet(instance.metadata, treeIndex)
         i <- 1 to repetition
         leaf <- tree.leafFor(instance.features).toList
         if stopper.shouldSplit(leaf.target) && rng.nextDouble < stopper.samplingRateToSplitLocally(leaf.target)
@@ -94,21 +95,21 @@ case class Trainer[K: Ordering, V, T: Semigroup: Monoid: ClassTag](
 
     val emptyExpansions = context
       .parallelize(0 until sampler.numTrees)
-      .map { _ -> List[(Int, Node[K, V, T, Unit])]() }
+      .map { _ -> List[(Int, Node[K, V, T, A])]() }
 
     val newTrees = trainingData
       .flatMap(sampleInstances)
       .groupByKey()
       .map {
         case ((treeIndex, leafIndex), instances) =>
-          val target = Monoid.sum(instances.map { _.target })
-          val leaf = LeafNode[K, V, T, Unit](0, target)
-          val expanded = Tree.expand(times, leaf, splitter, evaluator, stopper, instances)
+          val (target, annotation) = Monoid.sum(instances.map { i => (i.target, annotator.create(i.metadata)) })
+          val leaf = LeafNode[K, V, T, A](0, target, annotation)
+          val expanded = Tree.expand(times, leaf, splitter, evaluator, stopper, annotator, instances)
           treeIndex -> List(leafIndex -> expanded)
       }
       .union(emptyExpansions)
       .algebird
-      .sumByKey[Int, List[(Int, Node[K, V, T, Unit])]]
+      .sumByKey[Int, List[(Int, Node[K, V, T, A])]]
       .map {
         case (treeIndex, leafExpansions) =>
           val expansions = leafExpansions.toMap
@@ -121,8 +122,8 @@ case class Trainer[K: Ordering, V, T: Semigroup: Monoid: ClassTag](
     copy(trees = newTrees)
   }
 
-  def expandTimes(times: Int)(implicit splitter: Splitter[V, T], evaluator: Evaluator[V, T], stopper: Stopper[T]): Trainer[K, V, T] = {
-    def loop(trainer: Trainer[K, V, T], i: Int): Trainer[K, V, T] =
+  def expandTimes(times: Int)(implicit splitter: Splitter[V, T], evaluator: Evaluator[V, T, A], stopper: Stopper[T]): Trainer[M, K, V, T, A] = {
+    def loop(trainer: Trainer[M, K, V, T, A], i: Int): Trainer[M, K, V, T, A] =
       if (i > 0) loop(trainer.expand, i - 1)
       else trainer
 
@@ -132,30 +133,30 @@ case class Trainer[K: Ordering, V, T: Semigroup: Monoid: ClassTag](
   /**
    * Grow the trees by splitting all the leaf nodes as the stopper allows.
    */
-  private def expand(implicit splitter: Splitter[V, T], evaluator: Evaluator[V, T], stopper: Stopper[T]): Trainer[K, V, T] = {
+  private def expand(implicit splitter: Splitter[V, T], evaluator: Evaluator[V, T, A], stopper: Stopper[T]): Trainer[M, K, V, T, A] = {
     // Our bucket has a tree index, leaf index, and feature.
     type Bucket = (Int, Int, K)
 
     // A scored split for a particular feature.
-    type ScoredSplit = (K, Split[V, T], Double)
+    type ScoredSplit = (K, Split[V, T, A], Double)
 
     implicit object ScoredSplitSemigroup extends Semigroup[ScoredSplit] {
       def plus(a: ScoredSplit, b: ScoredSplit) =
         if (b._3 > a._3) b else a
     }
 
-    val treeMap: scala.collection.Map[Int, Tree[K, V, T]] = trees.collectAsMap()
+    val treeMap: scala.collection.Map[Int, Tree[K, V, T, A]] = trees.collectAsMap()
 
-    val collectFeatures: Instance[K, V, T] => Iterable[(Bucket, splitter.S)] = { instance =>
+    val collectFeatures: Instance[M, Map[K, V], T] => Iterable[(Bucket, splitter.S)] = { instance =>
       val features = instance.features.mapValues(splitter.create(_, instance.target))
       for {
         (treeIndex, tree) <- treeMap.toList
-        repetition = sampler.timesInTrainingSet(instance.id, instance.timestamp, treeIndex)
+        repetition = sampler.timesInTrainingSet(instance.metadata, treeIndex)
         i <- 1 to repetition
         leaf <- tree.leafFor(instance.features).toList
         if stopper.shouldSplit(leaf.target) && stopper.shouldSplitDistributed(leaf.target)
         (feature, stats) <- features
-        if sampler.includeFeature(feature, treeIndex, leaf.index)
+        if sampler.includeFeature(instance.metadata, feature, treeIndex, leaf.index)
       } yield {
         (treeIndex, leaf.index, feature) -> stats
       }
@@ -165,7 +166,7 @@ case class Trainer[K: Ordering, V, T: Semigroup: Monoid: ClassTag](
       val (treeIndex, leafIndex, feature) = bucket
       for {
         leaf <- treeMap(treeIndex).leafAt(leafIndex).toList
-        rawSplit <- splitter.split(leaf.target, stats)
+        rawSplit <- splitter.split(leaf.target, stats, leaf.annotation)
       } yield {
         val (split, goodness) = evaluator.evaluate(rawSplit)
         treeIndex -> Map(leafIndex -> (feature, split, goodness))
@@ -175,15 +176,15 @@ case class Trainer[K: Ordering, V, T: Semigroup: Monoid: ClassTag](
     val emptySplits: RDD[(Int, Map[Int, ScoredSplit])] =
       context.parallelize(Seq.tabulate(sampler.numTrees)(_ -> Map.empty[Int, ScoredSplit]))
 
-    val growTree: (Int, Map[Int, ScoredSplit]) => (Int, Tree[K, V, T]) = { (treeIndex, leafSplits) =>
+    val growTree: (Int, Map[Int, ScoredSplit]) => (Int, Tree[K, V, T, A]) = { (treeIndex, leafSplits) =>
       val newTree =
         treeMap(treeIndex)
           .growByLeafIndex { index =>
             for {
               (feature, split, _) <- leafSplits.get(index).toList
-              (predicate, target) <- split.predicates
+              (predicate, target, annotation) <- split.predicates
             } yield {
-              (feature, predicate, target, ())
+              (feature, predicate, target, annotation)
             }
           }
       treeIndex -> newTree
@@ -210,13 +211,17 @@ case class Trainer[K: Ordering, V, T: Semigroup: Monoid: ClassTag](
 object Trainer {
   val MaxParallelism = 20
 
-  def apply[K: Ordering, V, T: Monoid: ClassTag](trainingData: RDD[Instance[K, V, T]], sampler: Sampler[K]): Trainer[K, V, T] = {
+  def apply[M, K: Ordering, V, T: Monoid: ClassTag, A: Monoid: ClassTag](
+      trainingData: RDD[Instance[M, Map[K, V], T]],
+      sampler: Sampler[M, K],
+      annotator: Annotator[M, A]): Trainer[M, K, V, T, A] = {
     val sc = trainingData.context
-    val initialTrees = Vector.tabulate(sampler.numTrees) { _ -> Tree.singleton[K, V, T](Monoid.zero) }
+    val initialTrees = Vector.tabulate(sampler.numTrees) { _ -> Tree.singleton[K, V, T, A](Monoid.zero[T], Monoid.zero[A]) }
     val parallelism = scala.math.min(MaxParallelism, sampler.numTrees)
     Trainer(
       trainingData,
       sampler,
+      annotator,
       sc.parallelize(initialTrees, parallelism))
   }
 }
