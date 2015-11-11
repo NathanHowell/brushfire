@@ -140,10 +140,11 @@ object JsonInjections {
     implicit def nodeJsonNodeInjection: JsonNodeInjection[Node[K, V, T, A]] =
       new AbstractJsonNodeInjection[Node[K, V, T, A]] {
         def apply(node: Node[K, V, T, A]) = node match {
-          case LeafNode(index, target, _) =>
+          case LeafNode(index, target, annotation) =>
             val obj = JsonNodeFactory.instance.objectNode
             obj.put("leaf", toJsonNode(index))
             obj.put("distribution", toJsonNode(target))
+            obj.put("annotation", toJsonNode(annotation))
             obj
 
           case SplitNode(annotation, children) =>
