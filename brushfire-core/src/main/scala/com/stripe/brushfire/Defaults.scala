@@ -11,7 +11,7 @@ trait LowPriorityDefaults {
     DispatchedSplitter(ordinal, nominal, continuous, sparse)
 
   implicit def monoidAnnotator[M: Monoid]: Annotator[M, M] = {
-    new Annotator[M, M] {
+    new Annotator[M, M] with Serializable {
       override val monoid: Monoid[M] = {
         implicitly[Monoid[M]]
       }
@@ -23,7 +23,7 @@ trait LowPriorityDefaults {
   }
 
   implicit def defaultMetadataAnnotator[M: Monoid]: Annotator[DefaultMetadata, M] = {
-    new Annotator[DefaultMetadata, M] {
+    new Annotator[DefaultMetadata, M] with Serializable {
       override val monoid: Monoid[M] = {
         implicitly[Monoid[M]]
       }
