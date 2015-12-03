@@ -19,6 +19,17 @@ case class Trainer[M, K: Ordering, V, T: Monoid: ClassTag, A: Monoid: ClassTag](
     trees: RDD[(Int, Tree[K, V, T, A])]) {
   private def context: SparkContext = trainingData.context
 
+  // A scored split for a particular feature.
+  type ScoredSplit = (K, Split[V, T, A], Double)
+
+  private val emptySplits: RDD[(Int, Map[Int, ScoredSplit])] = context
+    .parallelize(Seq.tabulate(sampler.numTrees)(_ -> Map.empty[Int, ScoredSplit]))
+    .cache()
+
+  private val emptyExpansions: RDD[(Int, List[(Int, Node[K, V, T, A])])] = context
+    .parallelize(Seq.tabulate(sampler.numTrees)(_ -> List.empty[(Int, Node[K, V, T, A])]))
+    .cache()
+
   def saveAsTextFile(path: String)(implicit inj: Injection[Tree[K, V, T, A], String]): Trainer[M, K, V, T, A] = {
     trees
       .map {
@@ -92,10 +103,6 @@ case class Trainer[M, K: Ordering, V, T: Monoid: ClassTag, A: Monoid: ClassTag](
       }
     }
 
-    val emptyExpansions = context
-      .parallelize(0 until sampler.numTrees)
-      .map { _ -> List[(Int, Node[K, V, T, A])]() }
-
     val newTrees = trainingData
       .mapPartitionsWithIndex {
         case (idx, instances) =>
@@ -140,9 +147,6 @@ case class Trainer[M, K: Ordering, V, T: Monoid: ClassTag, A: Monoid: ClassTag](
     // Our bucket has a tree index, leaf index, and feature.
     type Bucket = (Int, Int, K)
 
-    // A scored split for a particular feature.
-    type ScoredSplit = (K, Split[V, T, A], Double)
-
     implicit object ScoredSplitSemigroup extends Semigroup[ScoredSplit] {
       def plus(a: ScoredSplit, b: ScoredSplit) =
         if (b._3 > a._3) b else a
@@ -175,9 +179,6 @@ case class Trainer[M, K: Ordering, V, T: Monoid: ClassTag, A: Monoid: ClassTag](
         treeIndex -> Map(leafIndex -> (feature, split, goodness))
       }
     }
-
-    val emptySplits: RDD[(Int, Map[Int, ScoredSplit])] =
-      context.parallelize(Seq.tabulate(sampler.numTrees)(_ -> Map.empty[Int, ScoredSplit]))
 
     val growTree: (Int, Map[Int, ScoredSplit]) => (Int, Tree[K, V, T, A]) = { (treeIndex, leafSplits) =>
       val newTree =
