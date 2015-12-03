@@ -79,9 +79,8 @@ case class Trainer[M, K: Ordering, V, T: Monoid: ClassTag, A: Monoid: ClassTag](
     type LeafId = (Int, Int)
 
     val treeMap: scala.collection.Map[Int, Tree[K, V, T, A]] = trees.collectAsMap()
-    val rng: Random = new Random(1234L)
 
-    val sampleInstances: Instance[M, Map[K, V], T] => Iterable[(LeafId, Instance[M, Map[K, V], T])] = { instance =>
+    def sampleInstances(rng: Random): Instance[M, Map[K, V], T] => Iterable[(LeafId, Instance[M, Map[K, V], T])] = { instance =>
       for {
         (treeIndex, tree) <- treeMap.toList
         repetition = sampler.timesInTrainingSet(instance.metadata, treeIndex)
@@ -98,7 +97,11 @@ case class Trainer[M, K: Ordering, V, T: Monoid: ClassTag, A: Monoid: ClassTag](
       .map { _ -> List[(Int, Node[K, V, T, A])]() }
 
     val newTrees = trainingData
-      .flatMap(sampleInstances)
+      .mapPartitionsWithIndex {
+        case (idx, instances) =>
+          val rng: Random = new Random(idx)
+          instances.flatMap(sampleInstances(rng))
+      }
       .groupByKey()
       .map {
         case ((treeIndex, leafIndex), instances) =>
