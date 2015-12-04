@@ -6,15 +6,25 @@ case class BinarySplitter[V, T: Monoid](partition: V => Predicate[V])
     extends Splitter[V, T] {
 
   type S = Map[V, T]
-  def create(value: V, target: T) = Map(value -> target)
+  def create(value: V, target: T): S = Map(value -> target)
 
   val semigroup = implicitly[Semigroup[Map[V, T]]]
+  private val zero = Monoid.zero[T]
+  private val plus = Monoid.plus[T] _
 
-  def split[A](parent: T, stats: Map[V, T], annotation: A) = {
+  def split[A](parent: T, stats: Map[V, T], annotation: A): Iterable[BinarySplit[V, T, A]] = {
     stats.keys.map { v =>
       val predicate = partition(v)
-      val (trues, falses) = stats.partition { case (v, d) => predicate(Some(v)) }
-      BinarySplit(predicate, Monoid.sum(trues.values), Monoid.sum(falses.values), annotation)
+      val (trues, falses) = stats.foldLeft((zero, zero)) {
+        case ((t, f), (k, d)) =>
+          if (predicate(Some(k))) {
+            (plus(t, d), f)
+          } else {
+            (t, plus(f, d))
+          }
+      }
+
+      BinarySplit(predicate, trues, falses, annotation)
     }
   }
 }
