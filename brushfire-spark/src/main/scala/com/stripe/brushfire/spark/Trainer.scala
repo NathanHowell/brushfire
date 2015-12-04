@@ -30,6 +30,11 @@ case class Trainer[M, K: Ordering, V, T: Monoid: ClassTag, A: Monoid: ClassTag](
     .parallelize(Seq.tabulate(sampler.numTrees)(_ -> List.empty[(Int, Node[K, V, T, A])]))
     .cache()
 
+  private implicit object ScoredSplitSemigroup extends Semigroup[ScoredSplit] {
+    def plus(a: ScoredSplit, b: ScoredSplit) =
+      if (b._3 > a._3) b else a
+  }
+
   def saveAsTextFile(path: String)(implicit inj: Injection[Tree[K, V, T, A], String]): Trainer[M, K, V, T, A] = {
     trees
       .map {
@@ -146,11 +151,6 @@ case class Trainer[M, K: Ordering, V, T: Monoid: ClassTag, A: Monoid: ClassTag](
   private def expand(implicit splitter: Splitter[V, T], evaluator: Evaluator[V, T, A], stopper: Stopper[T]): Trainer[M, K, V, T, A] = {
     // Our bucket has a tree index, leaf index, and feature.
     type Bucket = (Int, Int, K)
-
-    implicit object ScoredSplitSemigroup extends Semigroup[ScoredSplit] {
-      def plus(a: ScoredSplit, b: ScoredSplit) =
-        if (b._3 > a._3) b else a
-    }
 
     val treeMap: scala.collection.Map[Int, Tree[K, V, T, A]] = trees.collectAsMap()
 
