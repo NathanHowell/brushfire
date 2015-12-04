@@ -79,7 +79,7 @@ case class TDigestSplitter[L](k: Int = 25, compression: Double = 100.0) extends 
       // and so they can be discarded immediately
       if left.nonEmpty || right.nonEmpty
     } yield {
-      BinarySplit(LessThan(q), left, right, annotation)
+      BinarySplit(IsPresent(Some(LessThan(q))), left, right, annotation)
     }
 
     // if the input is not continuous or has too few examples we will end up
