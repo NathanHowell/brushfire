@@ -117,3 +117,19 @@ trait Annotator[M, A] {
 
   def create(metadata: M): A
 }
+
+object Annotator {
+  private class Identity[A : Monoid] extends Annotator[A, A] with Serializable {
+    override def monoid: Monoid[A] = {
+      implicitly[Monoid[A]]
+    }
+
+    override def create(metadata: A): A = {
+      metadata
+    }
+  }
+
+  def identity[A : Monoid]: Annotator[A, A] = {
+    new Identity[A]
+  }
+}
