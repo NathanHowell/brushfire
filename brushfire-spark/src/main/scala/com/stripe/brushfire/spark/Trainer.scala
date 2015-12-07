@@ -59,32 +59,32 @@ case class Trainer[M, K: Ordering, V, T: Monoid: ClassTag, A: Monoid: ClassTag](
       context.broadcast(trees.collectAsMap())
     }
 
-    val collectLeaves: Instance[M, Map[K, V], T] => Iterable[(LeafId, T)] = { instance =>
+    val collectLeaves: Instance[M, Map[K, V], T] => Iterable[(LeafId, (T, A))] = { instance =>
       for {
         (treeIndex, tree) <- treeMap.value.toList
         repetition = sampler.timesInTrainingSet(instance.metadata, treeIndex)
         i <- 1 to repetition
         leafIndex <- tree.leafIndexFor(instance.features).toList
       } yield {
-        (treeIndex, leafIndex) -> instance.target
+        (treeIndex, leafIndex) -> (instance.target, annotator.create(instance.metadata))
       }
     }
 
     val newTrees = trainingData
       .flatMap(collectLeaves)
       .algebird
-      .sumByKey[LeafId, T]
+      .sumByKey[LeafId, (T, A)]
       .map {
-        case ((treeIndex, leafIndex), target) =>
-          treeIndex -> Map(leafIndex -> target)
+        case ((treeIndex, leafIndex), stats) =>
+          treeIndex -> Map(leafIndex -> stats)
       }
       .algebird
-      .sumByKey[Int, Map[Int, T]]
+      .sumByKey[Int, Map[Int, (T, A)]]
       .map {
-        case (treeIndex, leafTargets) =>
+        case (treeIndex, stats) =>
           val newTree =
             treeMap.value(treeIndex).updateByLeafIndex { index =>
-              leafTargets.get(index).map(LeafNode(index, _))
+              stats.get(index).map { case (t, a) => LeafNode(index, t, a) }
             }
 
           treeIndex -> newTree
@@ -161,7 +161,7 @@ case class Trainer[M, K: Ordering, V, T: Monoid: ClassTag, A: Monoid: ClassTag](
       context.broadcast(trees.collectAsMap())
     }
 
-    val collectFeatures: Instance[M, Map[K, V], T] => Iterable[(Bucket, splitter.S)] = { instance =>
+    val collectFeatures: Instance[M, Map[K, V], T] => Iterable[(Bucket, (splitter.S, A))] = { instance =>
       val features = instance.features.mapValues(splitter.create(_, instance.target))
       for {
         (treeIndex, tree) <- treeMap.value.toList
@@ -172,15 +172,15 @@ case class Trainer[M, K: Ordering, V, T: Monoid: ClassTag, A: Monoid: ClassTag](
         (feature, stats) <- features
         if sampler.includeFeature(instance.metadata, feature, treeIndex, leaf.index)
       } yield {
-        (treeIndex, leaf.index, feature) -> stats
+        (treeIndex, leaf.index, feature) -> (stats, annotator.create(instance.metadata))
       }
     }
 
-    val split: (Bucket, splitter.S) => Iterable[(Int, Map[Int, ScoredSplit])] = {
-      case ((treeIndex, leafIndex, feature), stats) =>
+    val split: (Bucket, (splitter.S, A)) => Iterable[(Int, Map[Int, ScoredSplit])] = {
+      case ((treeIndex, leafIndex, feature), (stats, annotation)) =>
         for {
           leaf <- treeMap.value(treeIndex).leafAt(leafIndex).toList
-          rawSplit <- splitter.split(leaf.target, stats, leaf.annotation)
+          rawSplit <- splitter.split(leaf.target, stats, annotation)
         } yield {
           val (split, goodness) = evaluator.evaluate(rawSplit)
           treeIndex -> Map(leafIndex -> (feature, split, goodness))
@@ -205,9 +205,11 @@ case class Trainer[M, K: Ordering, V, T: Monoid: ClassTag, A: Monoid: ClassTag](
     implicit val existentialClassTag: ClassTag[splitter.S] =
       scala.reflect.classTag[AnyRef].asInstanceOf[ClassTag[splitter.S]]
 
+    val sg = new Tuple2Semigroup()(splitter.semigroup, annotator.monoid)
+
     val newTrees = trainingData
       .flatMap(collectFeatures)
-      .reduceByKey(splitter.semigroup.plus(_, _))
+      .reduceByKey(sg.plus(_, _))
       .flatMap(split.tupled)
       .union(emptySplits)
       .algebird
