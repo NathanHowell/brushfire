@@ -189,7 +189,7 @@ case class Trainer[M, K: Ordering, V, T: Monoid: ClassTag, A: Monoid: ClassTag](
 
     val growTree: (Int, Map[Int, ScoredSplit]) => (Int, Tree[K, V, T, A]) = { (treeIndex, leafSplits) =>
       val newTree =
-        treeMap.value(treeIndex)
+        treeMap.value.getOrElse(treeIndex, Tree.singleton(Monoid.zero[T], Monoid.zero[A]))
           .growByLeafIndex { index =>
             for {
               (feature, split, _) <- leafSplits.get(index).toList
